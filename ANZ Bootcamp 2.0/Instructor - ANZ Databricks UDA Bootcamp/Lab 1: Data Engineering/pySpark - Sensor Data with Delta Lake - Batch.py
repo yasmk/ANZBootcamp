@@ -65,9 +65,6 @@ df = spark.read\
   .csv(dataPath)
 
 display(df)
-
-# COMMAND ----------
-
 df.count()
 
 # COMMAND ----------
@@ -81,13 +78,7 @@ df.createOrReplaceTempView("bronze_readings_view")
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC select * from bronze_readings_view
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC Select count(*) from bronze_readings_view
+display(spark.sql("Select distinct(device_operational_status) from bronze_readings_view"))
 
 # COMMAND ----------
 
@@ -164,8 +155,8 @@ display(delta_log_df)
 
 # COMMAND ----------
 
-commitInfo_df = delta_log_df.select("add").where("add is not NULL")
-display(commitInfo_df.select(col("add.*")))
+add_df = delta_log_df.select("add").where("add is not NULL")
+display(add_df.select(col("add.*")))
 
 # COMMAND ----------
 
@@ -202,34 +193,18 @@ display(lastOperationDF)
 
 # COMMAND ----------
 
-display(deltaBronzeTable.toDF())
+bronze_df = deltaBronzeTable.toDF()
+display(bronze_df)
 
 # COMMAND ----------
 
 from pyspark.sql.functions import date_format, to_date
-display(deltaBronzeTable.toDF().select(date_format(col("reading_time"), "y-M-d")) )
-
-# COMMAND ----------
-
-new_df = deltaBronzeTable.toDF()
+display(bronze_df.select(date_format(col("reading_time"), "y-M-d")) )
 
 # COMMAND ----------
 
 from pyspark.sql.functions import count, sum
-display(new_df.groupBy(to_date("reading_time").alias("date")).agg(count("*").alias("count")))
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-display(deltaBronzeTable.toDF().select(to_date(col("reading_time"))) )
-
-# COMMAND ----------
-
-new_df = deltaBronzeTable.toDF().select(DATE(col(reading_time)) )
-display(new_df)
+display(bronze_df.groupBy(to_date("reading_time").alias("date")).agg(count("*").alias("count")))
 
 # COMMAND ----------
 
@@ -267,17 +242,23 @@ display(new_df)
 
 # COMMAND ----------
 
+spark.sql("DROP TABLE IF EXISTS sensor_readings_historical_silver")
+spark.sql(f"CREATE TABLE IF NOT EXISTS sensor_readings_historical_silver USING DELTA LOCATION '{silver_table_path}' AS SELECT * from bronze_readings_view")
+
+# COMMAND ----------
+
+spark.sql("DROP TABLE IF EXISTS sensor_readings_historical_silver")
+spark.sql(f"CREATE TABLE IF NOT EXISTS sensor_readings_historical_silver USING DELTA LOCATION '{silver_table_path}'")
+
+# COMMAND ----------
+
 # MAGIC %sql
-# MAGIC 
-# MAGIC DROP TABLE IF EXISTS sensor_readings_historical_silver;
+# MAGIC SELECT * FROM sensor_readings_historical_silver
 
 # COMMAND ----------
 
-spark.sql(f"CREATE TABLE if not exists sensor_readings_historical_silver USING DELTA LOCATION '{silver_table_path}' AS SELECT * from bronze_readings_view")
-
-# COMMAND ----------
-
-deltaBronzeTable.toDF().write.format("delta").mode("overwrite").save(silver_table_path)
+silver_df = deltaBronzeTable.toDF()
+silver_df.write.format("delta").mode("overwrite").save(silver_table_path)
 
 # COMMAND ----------
 
@@ -286,8 +267,22 @@ from delta.tables import *
 deltaSilverTable = DeltaTable.forPath(spark, bronze_table_path)
 
 fullHistoryDF = deltaSilverTable.history()    # get the full history of the table
+
 display(fullHistoryDF)
 
+# COMMAND ----------
+
+display(deltaSilverTable.toDF())
+
+# COMMAND ----------
+
+new_silver_df = silver_df.withColumn("reading_date", date_format(col("reading_time"), "y-M-d"))
+new_silver_df.write.format("delta").mode("overwrite").save(silver_table_path)
+
+# COMMAND ----------
+
+new_silver_df = silver_df.withColumn("reading_date", date_format(col("reading_time"), "y-M-d"))
+new_silver_df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(silver_table_path)
 
 
 # COMMAND ----------
@@ -300,6 +295,11 @@ deltaSilverTable = DeltaTable.forPath(spark, silver_table_path)
 fullHistoryDF = deltaSilverTable.history()    # get the full history of the table
 display(fullHistoryDF)
 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM sensor_readings_historical_silver
 
 # COMMAND ----------
 
